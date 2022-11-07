@@ -108,7 +108,9 @@ void flash_read_config() {
   if (myFile) {
     Serial.print("Reading config from ");
     Serial.println(config_file_name);
-    myFile.write((uint*)(&codeConfig), sizeof(codeConfig)); 
+    Serial.print("Length is ");
+    Serial.println(myFile.fileSize());
+    myFile.read((uint*)(&codeConfig), sizeof(codeConfig)); 
     myFile.close();
   } else {
     Serial.print("No config found, writing to ");
@@ -123,12 +125,26 @@ void flash_read_config() {
     codeConfig.pauseCodeBits = 32;
     flash_write_config();
   }
+  Serial.print(F("Read play = 0x"));
+  Serial.println(codeConfig.playCodeValue, HEX);
+  Serial.print(F("Read pause = 0x"));
+  Serial.println(codeConfig.pauseCodeValue, HEX);
 }
 
 void flash_write_config() {
-    myFile = fatfs.open(config_file_name, FILE_WRITE);
+    myFile = fatfs.open(config_file_name, (O_RDWR | O_CREAT | O_TRUNC));
+    if (!myFile) {
+      Serial.print("Failed to open for writing: ");
+      Serial.println(config_file_name);
+      return;
+    }
     myFile.write((uint*)(&codeConfig), sizeof(codeConfig)); 
-    myFile.close();  
+    myFile.close();
+    Serial.print(F("Stored play = 0x"));
+    Serial.println(codeConfig.playCodeValue, HEX);
+    Serial.print(F("Stored pause = 0x"));
+    Serial.println(codeConfig.pauseCodeValue, HEX);
+    flash_read_config();
 }
 
 void flash_setup() {
@@ -161,8 +177,9 @@ void setup() {
 }
 
 void ir_loop() {
+  static int pixelIndex = 0;
+  static int pixelInc = 1;
   if (waitingForPlay || waitingForPause) {
-    static int pixelIndex = 0;
     int8_t red;
     int8_t green;
     int8_t blue;
@@ -172,12 +189,12 @@ void ir_loop() {
       blue = 0;
     } else {      
       red = 0;
-      green = 255;
-      blue = 0;
+      green = 0;
+      blue = 255;
     }
     CircuitPlayground.clearPixels();
     CircuitPlayground.setPixelColor(pixelIndex, red, green, blue);
-    pixelIndex = (pixelIndex + 1) % 10;
+    pixelIndex = (pixelIndex + pixelInc + 10) % 10;
   }
   
   if (CircuitPlayground.irReceiver.getResults()) {
@@ -192,6 +209,7 @@ void ir_loop() {
       codeConfig.playCodeBits = codeBits;
       waitingForPlay = false;
       waitingForPause = true;
+      pixelInc = -pixelInc;
       Serial.print(F("Play = 0x"));
       Serial.println(codeConfig.playCodeValue, HEX);
     } else if (waitingForPause) {
@@ -199,6 +217,7 @@ void ir_loop() {
       codeConfig.pauseCodeValue = codeValue;
       codeConfig.pauseCodeBits = codeBits;
       waitingForPause = false;
+      pixelInc = -pixelInc;
       CircuitPlayground.clearPixels();    
       Serial.print(F("Pause = 0x"));
       Serial.println(codeConfig.pauseCodeValue, HEX);
