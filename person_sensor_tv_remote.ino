@@ -4,6 +4,8 @@
 */
 #include <Adafruit_CircuitPlayground.h>
 
+#include <EEPROM.h>
+
 #include "person_sensor.h"
 
 #if !defined(ARDUINO_SAMD_CIRCUITPLAYGROUND_EXPRESS)
@@ -34,23 +36,13 @@ uint8_t codeBits = 0;
 
 // We play some tricks to update the recorded values in flash so they persist.
 // See https://learn.adafruit.com/adafruit-feather-m0-basic-proto/adapting-sketches-to-m0#storing-data-in-flash-2677106.
-const uint8_t playCodeProtocolFlash = NECX;
-uint8_t* playCodeProtocol = (uint8_t*)(&playCodeProtocolFlash);
+const uint8_t PROGMEM playCodeProtocol[] = {NECX};
+const uint32_t PROGMEM playCodeValue[] = {0xE0E0E21D};
+const uint8_t PROGMEM playCodeBits[] = {32};
 
-const uint32_t playCodeValueFlash = 0xE0E0E21D;
-uint32_t* playCodeValue = (uint32_t*)(&playCodeValueFlash);
-
-const uint8_t playCodeBitsFlash = 32;
-uint8_t* playCodeBits = (uint8_t*)(&playCodeBitsFlash);
-
-const uint8_t pauseCodeProtocolFlash = NECX;
-uint8_t* pauseCodeProtocol = (uint8_t*)(&playCodeProtocolFlash);
-
-const uint32_t pauseCodeValueFlash = 0xE0E052AD;
-uint32_t* pauseCodeValue = (uint32_t*)(&pauseCodeValueFlash);
-
-const uint8_t pauseCodeBitsFlash = 32;
-uint8_t* pauseCodeBits = (uint8_t*)(&pauseCodeBitsFlash);
+const uint8_t PROGMEM pauseCodeProtocol[] = {NECX};
+const uint32_t PROGMEM pauseCodeValue[] = {0xE0E052AD};
+const uint8_t PROGMEM pauseCodeBits[] = {32};
 
 bool waitingForPlay = false;
 bool waitingForPause = false;
@@ -102,11 +94,31 @@ void receiveCode(void) {
 
 void setup() {
   CircuitPlayground.begin();
+  CircuitPlayground.clearPixels();    
   ir_setup();
   Wire.begin();
 }
 
 void ir_loop() {
+  if (waitingForPlay || waitingForPause) {
+    static int pixelIndex = 0;
+    int8_t red;
+    int8_t green;
+    int8_t blue;
+    if (waitingForPlay) {
+      red = 255;
+      green = 255;
+      blue = 0;
+    } else {      
+      red = 0;
+      green = 255;
+      blue = 0;
+    }
+    CircuitPlayground.clearPixels();
+    CircuitPlayground.setPixelColor(pixelIndex, red, green, blue);
+    pixelIndex = (pixelIndex + 1) % 10;
+  }
+  
   if (CircuitPlayground.irReceiver.getResults()) {
     CircuitPlayground.irDecoder.decode();
     receiveCode();
@@ -114,7 +126,7 @@ void ir_loop() {
   }
   if (gotNew) {
     if (waitingForPlay) {
-      *playCodeProtocol = codeProtocol;
+      pgm_write_byte(playCodeProtocol = codeProtocol;
       *playCodeValue = codeValue;
       *playCodeBits = codeBits;
       waitingForPlay = false;
@@ -126,6 +138,7 @@ void ir_loop() {
       *pauseCodeValue = codeValue;
       *pauseCodeBits = codeBits;
       waitingForPause = false;
+      CircuitPlayground.clearPixels();    
       Serial.print(F("Pause = 0x"));
       Serial.println(*pauseCodeValue, HEX);
     }
