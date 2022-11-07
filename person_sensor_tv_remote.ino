@@ -4,7 +4,10 @@
 */
 #include <Adafruit_CircuitPlayground.h>
 
-#include <EEPROM.h>
+#include <Adafruit_SPIFlash.h>
+
+// for flashTransport definition
+#include "flash_config.h"
 
 #include "person_sensor.h"
 
@@ -34,15 +37,16 @@ uint8_t codeProtocol = UNKNOWN;
 uint32_t codeValue = 0;
 uint8_t codeBits = 0;
 
-// We play some tricks to update the recorded values in flash so they persist.
-// See https://learn.adafruit.com/adafruit-feather-m0-basic-proto/adapting-sketches-to-m0#storing-data-in-flash-2677106.
-const uint8_t PROGMEM playCodeProtocol[] = {NECX};
-const uint32_t PROGMEM playCodeValue[] = {0xE0E0E21D};
-const uint8_t PROGMEM playCodeBits[] = {32};
+typedef struct __attribute__ ((__packed__)) {
+  uint8_t playCodeProtocol = NECX;
+  uint32_t playCodeValue = 0xE0E0E21D;
+  uint8_t playCodeBits = 32;
 
-const uint8_t PROGMEM pauseCodeProtocol[] = {NECX};
-const uint32_t PROGMEM pauseCodeValue[] = {0xE0E052AD};
-const uint8_t PROGMEM pauseCodeBits[] = {32};
+  uint8_t pauseCodeProtocol = NECX;
+  uint32_t pauseCodeValue = 0xE0E052AD;
+  uint8_t pauseCodeBits = 32;
+} CodeConfig_t;
+CodeConfig_t codeConfig = {};
 
 bool waitingForPlay = false;
 bool waitingForPause = false;
@@ -60,6 +64,13 @@ const int32_t playDelayCount = (playDelaySeconds * 1000) / SAMPLE_DELAY_MS;
 int32_t timeSinceFaceSeen = 0;
 int32_t timeFaceSeen = 0;
 bool isPlaying = true;
+
+Adafruit_SPIFlash flash(&flashTransport);
+FatVolume fatfs;
+File32 myFile;
+
+#define FLASH_BLOCK_SIZE (256)
+const char* config_file_name = "config.bin";
 
 void ir_setup() {
   gotOne=false;
@@ -92,10 +103,60 @@ void receiveCode(void) {
   Serial.println(codeValue, HEX);
 }
 
+void flash_read_config() {
+  myFile = fatfs.open(config_file_name);
+  if (myFile) {
+    Serial.print("Reading config from ");
+    Serial.println(config_file_name);
+    myFile.write((uint*)(&codeConfig), sizeof(codeConfig)); 
+    myFile.close();
+  } else {
+    Serial.print("No config found, writing to ");
+    Serial.println(config_file_name);
+    
+    codeConfig.playCodeProtocol = NECX;
+    codeConfig.playCodeValue = 0xE0E0E21D;
+    codeConfig.playCodeBits = 32;
+
+    codeConfig.pauseCodeProtocol = NECX;
+    codeConfig.pauseCodeValue = 0xE0E052AD;
+    codeConfig.pauseCodeBits = 32;
+    flash_write_config();
+  }
+}
+
+void flash_write_config() {
+    myFile = fatfs.open(config_file_name, FILE_WRITE);
+    myFile.write((uint*)(&codeConfig), sizeof(codeConfig)); 
+    myFile.close();  
+}
+
+void flash_setup() {
+  flash.begin();
+  
+  Serial.print("JEDEC ID: "); Serial.println(flash.getJEDECID(), HEX);
+  Serial.print("Flash size: "); Serial.println(flash.size());
+  Serial.print("Flash page size: "); Serial.println(flash.pageSize());
+  Serial.print("Flash num pages: "); Serial.println(flash.numPages());
+
+  // Open file system on the flash
+  if ( !fatfs.begin(&flash) ) {
+    Serial.println("Error: filesystem is not existed. Please try SdFat_format example to make one.");
+    while(1)
+    {
+      yield();
+      delay(1);
+    }
+  }
+
+  flash_read_config();
+}
+
 void setup() {
   CircuitPlayground.begin();
   CircuitPlayground.clearPixels();    
   ir_setup();
+  flash_setup();
   Wire.begin();
 }
 
@@ -126,21 +187,22 @@ void ir_loop() {
   }
   if (gotNew) {
     if (waitingForPlay) {
-      pgm_write_byte(playCodeProtocol = codeProtocol;
-      *playCodeValue = codeValue;
-      *playCodeBits = codeBits;
+      codeConfig.playCodeProtocol = codeProtocol;
+      codeConfig.playCodeValue = codeValue;
+      codeConfig.playCodeBits = codeBits;
       waitingForPlay = false;
       waitingForPause = true;
       Serial.print(F("Play = 0x"));
-      Serial.println(*playCodeValue, HEX);
+      Serial.println(codeConfig.playCodeValue, HEX);
     } else if (waitingForPause) {
-      *pauseCodeProtocol = codeProtocol;
-      *pauseCodeValue = codeValue;
-      *pauseCodeBits = codeBits;
+      codeConfig.pauseCodeProtocol = codeProtocol;
+      codeConfig.pauseCodeValue = codeValue;
+      codeConfig.pauseCodeBits = codeBits;
       waitingForPause = false;
       CircuitPlayground.clearPixels();    
       Serial.print(F("Pause = 0x"));
-      Serial.println(*pauseCodeValue, HEX);
+      Serial.println(codeConfig.pauseCodeValue, HEX);
+      flash_write_config();
     }
     gotNew = false;
   }
@@ -166,11 +228,11 @@ void person_sensor_loop() {
   }
   if (isPlaying) {
     if (timeSinceFaceSeen == pauseDelayCount) {
-      CircuitPlayground.irSend.send(*pauseCodeProtocol, *pauseCodeValue, *pauseCodeBits);
+      CircuitPlayground.irSend.send(codeConfig.pauseCodeProtocol, codeConfig.pauseCodeValue, codeConfig.pauseCodeBits);
       isPlaying = false;
     }
   } else if (hasFace && (timeFaceSeen > playDelayCount)) {
-    CircuitPlayground.irSend.send(*playCodeProtocol, *playCodeValue, *playCodeBits);
+    CircuitPlayground.irSend.send(codeConfig.playCodeProtocol, codeConfig.playCodeValue, codeConfig.playCodeBits);
     isPlaying = true;
   }
 
@@ -189,14 +251,14 @@ void loop() {
   // If the right button is pressed send a play/pause code.
   if (CircuitPlayground.rightButton()) {
     if (isPaused) {
-      CircuitPlayground.irSend.send(*playCodeProtocol, *playCodeValue, *playCodeBits);
+      CircuitPlayground.irSend.send(codeConfig.playCodeProtocol, codeConfig.playCodeValue, codeConfig.playCodeBits);
       Serial.print(F("Sending play = 0x"));
-      Serial.println(*playCodeValue, HEX);      
+      Serial.println(codeConfig.playCodeValue, HEX);      
       isPaused = false;
     } else {
-      CircuitPlayground.irSend.send(*pauseCodeProtocol, *pauseCodeValue, *pauseCodeBits);      
+      CircuitPlayground.irSend.send(codeConfig.pauseCodeProtocol, codeConfig.pauseCodeValue, codeConfig.pauseCodeBits);      
       Serial.print(F("Sending pause = 0x"));
-      Serial.println(*pauseCodeValue, HEX);      
+      Serial.println(codeConfig.pauseCodeValue, HEX);      
       isPaused = true;
     }
     while (CircuitPlayground.rightButton()) {}//wait until button released
