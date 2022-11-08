@@ -54,3 +54,19 @@ and used Blu Tack to mount the sensor in the right position, but I'm sure those
 of you more skilled can come up with a more elegant solution.
 
 ![Blu Tack mounting horror](tv_sensor_mounting.jpg)
+
+## Arduino Setup
+
+We're going to be using the Arduino IDE to build and flash our program. Download
+the version for your OS to start. There's [an official Adafruit guide](https://learn.adafruit.com/adafruit-circuit-playground-express/set-up-arduino-ide)
+to installing what you need for a Circuit Playground Express, but don't follow
+it! It uses the more limited Arduino version of the board package, which doesn't
+support a lot of the CPX's features. Instead, you'll need to install the
+Adafruit version of the board package.
+
+To do this, you'll need to first add `https://adafruit.github.io/arduino-board-index/package_adafruit_index.json`
+to the `Additional Boards Manager URLs` field in the Arduino preferences window.
+
+![Arduino preferences](board_url.png)
+
+Once this is set, 
