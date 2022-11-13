@@ -57,15 +57,25 @@ uint32_t codeValue = 0;
 uint8_t codeBits = 0;
 
 typedef struct __attribute__ ((__packed__)) {
-  uint8_t playCodeProtocol = NECX;
-  uint32_t playCodeValue = 0xE0E0E21D;
-  uint8_t playCodeBits = 32;
+  uint8_t playCodeProtocol;
+  uint32_t playCodeValue;
+  uint8_t playCodeBits;
 
-  uint8_t pauseCodeProtocol = NECX;
-  uint32_t pauseCodeValue = 0xE0E052AD;
-  uint8_t pauseCodeBits = 32;
+  uint8_t pauseCodeProtocol;
+  uint32_t pauseCodeValue;
+  uint8_t pauseCodeBits;
 } CodeConfig_t;
-CodeConfig_t codeConfig = {};
+
+const CodeConfig_t samsungCodes = {
+  .playCodeProtocol = NECX,
+  .playCodeValue = 0xE0E0E21D,
+  .playCodeBits = 32,
+  .pauseCodeProtocol = NECX,
+  .pauseCodeValue = 0xE0E052AD,
+  .pauseCodeBits = 32,
+};
+
+CodeConfig_t codeConfig = samsungCodes;
 
 bool waitingForPlay = false;
 bool waitingForPause = false;
@@ -170,11 +180,6 @@ void flash_write_config() {
 
 void flash_setup() {
   flash.begin();
-  
-  Serial.print("JEDEC ID: "); Serial.println(flash.getJEDECID(), HEX);
-  Serial.print("Flash size: "); Serial.println(flash.size());
-  Serial.print("Flash page size: "); Serial.println(flash.pageSize());
-  Serial.print("Flash num pages: "); Serial.println(flash.numPages());
 
   // Open file system on the flash
   if ( !fatfs.begin(&flash) ) {
