@@ -203,10 +203,14 @@ void setup() {
   Wire.begin();
 }
 
+bool is_recording() {
+  return (waitingForPlay || waitingForPause);
+}
+
 void ir_loop() {
   static int pixelIndex = 0;
   static int pixelInc = 1;
-  if (waitingForPlay || waitingForPause) {
+  if (is_recording()) {
     int8_t red;
     int8_t green;
     int8_t blue;
@@ -258,6 +262,9 @@ void ir_loop() {
 }
 
 void person_sensor_loop() {
+  if (is_recording()) {
+    return;
+  }
   person_sensor_results_t results = {};
   // Perform a read action on the I2C address of the sensor to get the
   // current face information detected.
