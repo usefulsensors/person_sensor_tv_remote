@@ -2,6 +2,8 @@
    Illustrates how to transmit an IR signal whenever you do push one of the
    built-in pushbuttons.
 */
+#include <math.h>
+
 #include <Adafruit_CircuitPlayground.h>
 
 #include <Adafruit_SPIFlash.h>
@@ -10,6 +12,23 @@
 #include "flash_config.h"
 
 #include "person_sensor.h"
+
+#include "audio_data_done.h"
+#include "audio_data_down.h"
+#include "audio_data_enter.h"
+#include "audio_data_left.h"
+#include "audio_data_lg.h"
+#include "audio_data_mute.h"
+#include "audio_data_pause.h"
+#include "audio_data_play.h"
+#include "audio_data_press.h"
+#include "audio_data_recording.h"
+#include "audio_data_right.h"
+#include "audio_data_samsung.h"
+#include "audio_data_sony.h"
+#include "audio_data_tcl.h"
+#include "audio_data_up.h"
+#include "audio_data_vizio.h"
 
 #if !defined(ARDUINO_SAMD_CIRCUITPLAYGROUND_EXPRESS)
   #error "Infrared support is only for the Circuit Playground Express, it doesn't work with the Classic version"
@@ -71,6 +90,8 @@ File32 myFile;
 
 #define FLASH_BLOCK_SIZE (256)
 const char* config_file_name = "config.bin";
+
+const int audioSampleRate = 22050;
 
 void ir_setup() {
   gotOne=false;
@@ -168,6 +189,12 @@ void flash_setup() {
   flash_read_config();
 }
 
+#define PLAY_AUDIO(NAME) do { play_audio(g_##NAME##_data, g_##NAME##_data_len); } while (false)
+
+void play_audio(const uint8_t* bytes, int bytes_count) {
+  CircuitPlayground.speaker.playSound(bytes, bytes_count, audioSampleRate, false);
+}
+
 void setup() {
   CircuitPlayground.begin();
   CircuitPlayground.clearPixels();    
@@ -209,6 +236,8 @@ void ir_loop() {
       codeConfig.playCodeBits = codeBits;
       waitingForPlay = false;
       waitingForPause = true;
+      PLAY_AUDIO(press);
+      PLAY_AUDIO(pause);
       pixelInc = -pixelInc;
       Serial.print(F("Play = 0x"));
       Serial.println(codeConfig.playCodeValue, HEX);
@@ -217,6 +246,7 @@ void ir_loop() {
       codeConfig.pauseCodeValue = codeValue;
       codeConfig.pauseCodeBits = codeBits;
       waitingForPause = false;
+      PLAY_AUDIO(done);
       pixelInc = -pixelInc;
       CircuitPlayground.clearPixels();    
       Serial.print(F("Pause = 0x"));
@@ -248,24 +278,29 @@ void person_sensor_loop() {
   if (isPlaying) {
     if (timeSinceFaceSeen == pauseDelayCount) {
       CircuitPlayground.irSend.send(codeConfig.pauseCodeProtocol, codeConfig.pauseCodeValue, codeConfig.pauseCodeBits);
+      PLAY_AUDIO(pause);
       isPlaying = false;
     }
   } else if (hasFace && (timeFaceSeen > playDelayCount)) {
     CircuitPlayground.irSend.send(codeConfig.playCodeProtocol, codeConfig.playCodeValue, codeConfig.playCodeBits);
+    PLAY_AUDIO(play);
     isPlaying = true;
   }
 
   delay(SAMPLE_DELAY_MS);
 }
 
-void loop() {
+void loop() {  
   ir_loop();
   person_sensor_loop();
   
   // If the left button is pressed send a mute code.
   if (CircuitPlayground.leftButton()) {
     waitingForPlay = true;
+    PLAY_AUDIO(recording);
     while (CircuitPlayground.leftButton()) {}//wait until button released
+    PLAY_AUDIO(press);
+    PLAY_AUDIO(play);
   }
   // If the right button is pressed send a play/pause code.
   if (CircuitPlayground.rightButton()) {
