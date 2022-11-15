@@ -15,18 +15,11 @@
 // Configuration commands for the sensor. Write this as a byte to the I2C bus
 // followed by a second byte as an argument value.
 #define PERSON_SENSOR_REG_MODE             (0x01)
-#define PERSON_SENSOR_REG_ENABLE_ID        (0x02)
-#define PERSON_SENSOR_REG_SINGLE_SHOT      (0x03)
-#define PERSON_SENSOR_REG_CALIBRATE_ID     (0x04)
-#define PERSON_SENSOR_REG_PERSIST_IDS      (0x05)
-#define PERSON_SENSOR_REG_ERASE_IDS        (0x06)
-#define PERSON_SENSOR_REG_DEBUG_MODE       (0x07)
+#define PERSON_SENSOR_REG_SINGLE_SHOT      (0x02)
+#define PERSON_SENSOR_REG_DEBUG_MODE       (0x03)
 
 // The person sensor will never output more than four faces.
 #define PERSON_SENSOR_MAX_FACES_COUNT (4)
-
-// How many different faces the sensor can recognize.
-#define PERSON_SENSOR_MAX_IDS_COUNT (7)
 
 // The following structures represent the data format returned from the person
 // sensor over the I2C communication protocol. The C standard doesn't
@@ -59,10 +52,9 @@ typedef struct __attribute__ ((__packed__)) {
     uint8_t box_top;          // Byte 3.
     uint8_t box_right;        // Byte 4.
     uint8_t box_bottom;       // Byte 5.
-    int8_t id_confidence;     // Byte 6.
-    int8_t id;                // Byte 7
-    uint8_t is_facing;        // Byte 8.
-} person_sensor_face_t;
+    uint8_t class_confidence; // Byte 6.
+    uint8_t gesture_class;    // Byte 7
+} person_sensor_hand_t;
 
 // This is the full structure of the packet returned over the wire from the
 // sensor when we do an I2C read from the peripheral address.
@@ -70,8 +62,8 @@ typedef struct __attribute__ ((__packed__)) {
 // verify this in practice, but we found it useful during our own debugging.
 typedef struct __attribute__ ((__packed__)) {
     person_sensor_results_header_t header;                     // Bytes 0-4.
-    int8_t num_faces;                                          // Byte 5.
-    person_sensor_face_t faces[PERSON_SENSOR_MAX_FACES_COUNT]; // Bytes 6-37.
+    int8_t num_hands;                                          // Byte 5.
+    person_sensor_hand_t hands[PERSON_SENSOR_MAX_FACES_COUNT]; // Bytes 6-37.
     uint16_t checksum;                                         // Bytes 38-39.
 } person_sensor_results_t;
 

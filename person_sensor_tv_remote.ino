@@ -42,6 +42,36 @@
 #define MY_PLAY 0xE0E0E21D
 #define MY_PAUSE 0xE0E052AD
 
+// === Samsung Preset Codes ===
+static const uint8_t kSamsungProtocol = NECX;
+static const uint8_t kSamsungCodeBits = 32;
+
+static const uint32_t kSamsungCodes[] = {
+  0xE0E06798, // Power
+  0xE0E006F9, // Up
+  0xE0E08679, // Down
+  0xE0E016E9, // Enter
+  0xE0E01AE5, // Return
+  0xE0E0F00F, // Mute
+};
+
+// === TCL Preset Codes ===
+static const uint8_t kTCLProtocol = NEC;
+static const uint8_t kTCLCodeBits = 32;
+
+static const uint32_t kTCLCodes[] = {
+  0x57E3E916, // Power
+  0x57E39867, // Up
+  0x57E3CC33, // Down
+  0x57E354AB, // Enter
+  0x57E36699, // Return
+  0x57E304FB, // Mute
+};
+
+// === LG Preset Codes ===
+
+// === Sony Preset Codes ===
+
 // How long to wait between reading the sensor. The sensor can be read as
 // frequently as you like, but the results only change at about 5FPS, so
 // waiting for 200ms is reasonable.
@@ -49,21 +79,19 @@ const int32_t SAMPLE_DELAY_MS = 200;
 
 //These flags keep track of whether we received the first code 
 //and if we have have received a new different code from a previous one.
-bool gotOne = false;
 bool gotNew = false; 
 
 uint8_t codeProtocol = UNKNOWN;
 uint32_t codeValue = 0;
 uint8_t codeBits = 0;
+static int codeIndex = 0;
+
+static const int kNumCodes = 6;
 
 typedef struct __attribute__ ((__packed__)) {
-  uint8_t playCodeProtocol;
-  uint32_t playCodeValue;
-  uint8_t playCodeBits;
-
-  uint8_t pauseCodeProtocol;
-  uint32_t pauseCodeValue;
-  uint8_t pauseCodeBits;
+  uint8_t codeProtocols[kNumCodes];
+  uint32_t codeValues[kNumCodes];
+  uint8_t codeBits[kNumCodes];
 } CodeConfig_t;
 
 const CodeConfig_t samsungCodes = {
@@ -77,22 +105,17 @@ const CodeConfig_t samsungCodes = {
 
 CodeConfig_t codeConfig = samsungCodes;
 
-bool waitingForPlay = false;
-bool waitingForPause = false;
+int delays[kNumCodes] = {};
+static const int gesture_delays[kNumCodes] = {
+  20, // on/off
+  6, // up
+  6, // down
+  12, // ok
+  12, // back
+  20, // mute
+};
 
-bool isPaused = false;
-
-// How long to wait to pause and play. Alter these to adjust the behavior.
-const int32_t pauseDelaySeconds = 5;
-const int32_t playDelaySeconds = 1;
-
-// Convert timeout seconds into loop iteration counts.
-const int32_t pauseDelayCount = (pauseDelaySeconds * 1000) / SAMPLE_DELAY_MS;
-const int32_t playDelayCount = (playDelaySeconds * 1000) / SAMPLE_DELAY_MS;
-
-int32_t timeSinceFaceSeen = 0;
-int32_t timeFaceSeen = 0;
-bool isPlaying = true;
+bool commandProgrammingMode = false;
 
 Adafruit_SPIFlash flash(&flashTransport);
 FatVolume fatfs;
@@ -104,7 +127,6 @@ const char* config_file_name = "config.bin";
 const int audioSampleRate = 22050;
 
 void ir_setup() {
-  gotOne=false;
   gotNew=false;
   Serial.begin(9600);
   delay(2000);
@@ -113,25 +135,34 @@ void ir_setup() {
 
 // Stores the code for later playback
 void receiveCode(void) {
+  static uint32_t last_code = 0;
   codeProtocol = CircuitPlayground.irDecoder.protocolNum;
   if (codeProtocol == UNKNOWN) {
     return;
   }
-  
-  Serial.print(F("Received "));
-  Serial.print(Pnames(codeProtocol));
+
   if (CircuitPlayground.irDecoder.value == REPEAT_CODE) {
     // Don't record a NEC repeat value as that's useless.
     Serial.println(F("repeat; ignoring."));
     return;
   }
 
-  codeValue = CircuitPlayground.irDecoder.value;
-  codeBits = CircuitPlayground.irDecoder.bits;
-  gotNew=true;
-  gotOne=true;
-  Serial.print(F(" Value:0x"));
-  Serial.println(codeValue, HEX);
+  if (CircuitPlayground.irDecoder.value != last_code) {
+    gotNew=true;
+    codeValue = CircuitPlayground.irDecoder.value;
+    codeBits = CircuitPlayground.irDecoder.bits;
+    last_code = codeValue;
+    Serial.print(F("Received "));
+    Serial.print(Pnames(codeProtocol));
+    Serial.print(F(" Value:0x"));
+    Serial.println(codeValue, HEX);
+  }
+}
+
+void useSamsungCodes() {
+  memcpy(&codeConfig.codeValues, kSamsungCodes, sizeof(uint32_t) * kNumCodes);
+  memset(&codeConfig.codeProtocols, kSamsungProtocol, sizeof(uint8_t) * kNumCodes);
+  memset(&codeConfig.codeBits, kSamsungCodeBits, sizeof(uint8_t) * kNumCodes);
 }
 
 void flash_read_config() {
@@ -144,22 +175,10 @@ void flash_read_config() {
     myFile.read((uint*)(&codeConfig), sizeof(codeConfig)); 
     myFile.close();
   } else {
-    Serial.print("No config found, writing to ");
-    Serial.println(config_file_name);
-    
-    codeConfig.playCodeProtocol = NECX;
-    codeConfig.playCodeValue = 0xE0E0E21D;
-    codeConfig.playCodeBits = 32;
-
-    codeConfig.pauseCodeProtocol = NECX;
-    codeConfig.pauseCodeValue = 0xE0E052AD;
-    codeConfig.pauseCodeBits = 32;
-    flash_write_config();
+    Serial.print("No config found, Defaulting to Samsung Codes");
+    //commandProgrammingMode = true;
+    useSamsungCodes();
   }
-  Serial.print(F("Read play = 0x"));
-  Serial.println(codeConfig.playCodeValue, HEX);
-  Serial.print(F("Read pause = 0x"));
-  Serial.println(codeConfig.pauseCodeValue, HEX);
 }
 
 void flash_write_config() {
@@ -171,10 +190,6 @@ void flash_write_config() {
     }
     myFile.write((uint*)(&codeConfig), sizeof(codeConfig)); 
     myFile.close();
-    Serial.print(F("Stored play = 0x"));
-    Serial.println(codeConfig.playCodeValue, HEX);
-    Serial.print(F("Stored pause = 0x"));
-    Serial.println(codeConfig.pauseCodeValue, HEX);
     flash_read_config();
 }
 
@@ -183,7 +198,7 @@ void flash_setup() {
 
   // Open file system on the flash
   if ( !fatfs.begin(&flash) ) {
-    Serial.println("Error: filesystem is not existed. Please try SdFat_format example to make one.");
+    Serial.println("Error: filesystem does not exist. Please try SdFat_format example to make one.");
     while(1)
     {
       yield();
@@ -213,120 +228,114 @@ bool is_recording() {
 }
 
 void ir_loop() {
-  static int pixelIndex = 0;
-  static int pixelInc = 1;
-  if (is_recording()) {
-    int8_t red;
-    int8_t green;
-    int8_t blue;
-    if (waitingForPlay) {
-      red = 255;
-      green = 255;
-      blue = 0;
-    } else {      
-      red = 0;
-      green = 0;
-      blue = 255;
-    }
-    CircuitPlayground.clearPixels();
-    CircuitPlayground.setPixelColor(pixelIndex, red, green, blue);
-    pixelIndex = (pixelIndex + pixelInc + 10) % 10;
+  if (!commandProgrammingMode) {
+    CircuitPlayground.setPixelColor(0, 0, 0, 255);  
   }
-  
   if (CircuitPlayground.irReceiver.getResults()) {
     CircuitPlayground.irDecoder.decode();
     receiveCode();
     CircuitPlayground.irReceiver.enableIRIn(); // Re-enable receiver
   }
   if (gotNew) {
-    if (waitingForPlay) {
-      codeConfig.playCodeProtocol = codeProtocol;
-      codeConfig.playCodeValue = codeValue;
-      codeConfig.playCodeBits = codeBits;
-      waitingForPlay = false;
-      waitingForPause = true;
-      PLAY_AUDIO(press);
-      PLAY_AUDIO(pause);
-      pixelInc = -pixelInc;
-      Serial.print(F("Play = 0x"));
-      Serial.println(codeConfig.playCodeValue, HEX);
-    } else if (waitingForPause) {
-      codeConfig.pauseCodeProtocol = codeProtocol;
-      codeConfig.pauseCodeValue = codeValue;
-      codeConfig.pauseCodeBits = codeBits;
-      waitingForPause = false;
-      PLAY_AUDIO(done);
-      pixelInc = -pixelInc;
-      CircuitPlayground.clearPixels();    
-      Serial.print(F("Pause = 0x"));
-      Serial.println(codeConfig.pauseCodeValue, HEX);
-      flash_write_config();
+    if (commandProgrammingMode) {
+      codeConfig.codeValues[codeIndex] = codeValue;
+      codeConfig.codeProtocols[codeIndex] = codeProtocol;
+      codeConfig.codeBits[codeIndex] = codeBits;
+      CircuitPlayground.setPixelColor(codeIndex, 255, 255, 0);
+
+      Serial.print(F("New Code = 0x"));
+      Serial.println(codeConfig.codeValues[codeIndex], HEX);
+      Serial.print("num codex received:"); Serial.println(codeIndex);
+      if (++codeIndex == kNumCodes) {
+        CircuitPlayground.clearPixels();
+        commandProgrammingMode = false;
+        Serial.println("got all commands, leaving programming mode.");
+        Serial.flush();
+        flash_write_config();
+      } else {
+        delay(200);
+      }
     }
     gotNew = false;
   }
 }
 
+int gestureIdToCodeIndex(int gesture_idx) {
+  if (gesture_idx == 13) {
+    return 0; // on/off
+  } else if (gesture_idx == 5) {
+    return 1; // up
+  } else if (gesture_idx == 2) {
+    return 2; // down
+  } else if (gesture_idx == 7) {
+    return 3; // ok
+  } else if (gesture_idx == 3) {
+    return 4; // back
+  } else if (gesture_idx == 6) {
+    return 5; // mute
+  }
+  return -1;
+}
+
 void person_sensor_loop() {
-  if (is_recording()) {
+  // disable transmit when in programming mode to avoid cross-talk between rx and tx IR LEDs.
+  if (commandProgrammingMode) {
     return;
   }
   person_sensor_results_t results = {};
   // Perform a read action on the I2C address of the sensor to get the
-  // current face information detected.
+  // current hand information detected.
   if (!person_sensor_read(&results)) {
     Serial.println("No person sensor results found on the i2c bus");
     delay(SAMPLE_DELAY_MS);
     return;
   }
 
-  const bool hasFace = (results.num_faces > 0);
-  if (hasFace) {
-    timeSinceFaceSeen = 0;
-    timeFaceSeen += 1;
-  } else {
-    timeSinceFaceSeen += 1;
-    timeFaceSeen = 0;
-  }
-  if (isPlaying) {
-    if (timeSinceFaceSeen == pauseDelayCount) {
-      CircuitPlayground.irSend.send(codeConfig.pauseCodeProtocol, codeConfig.pauseCodeValue, codeConfig.pauseCodeBits);
-      PLAY_AUDIO(pause);
-      isPlaying = false;
+  const bool hasHand = (results.num_hands > 0);
+  if (hasHand) {
+    int code_idx = gestureIdToCodeIndex(results.hands[0].gesture_class);
+    if (code_idx >= 0 && delays[code_idx] == 0) {
+      Serial.print("sending code "); Serial.println(code_idx);
+      CircuitPlayground.irSend.send(codeConfig.codeProtocols[code_idx], codeConfig.codeValues[code_idx], codeConfig.codeBits[code_idx]);
+      delays[code_idx] = gesture_delays[code_idx];
     }
-  } else if (hasFace && (timeFaceSeen > playDelayCount)) {
-    CircuitPlayground.irSend.send(codeConfig.playCodeProtocol, codeConfig.playCodeValue, codeConfig.playCodeBits);
-    PLAY_AUDIO(play);
-    isPlaying = true;
   }
 
+  for (int i=0; i<kNumCodes; i++) {
+    delays[i] -= 1;
+    if (delays[i] < 0) {
+      delays[i] = 0;
+    }
+  }
   delay(SAMPLE_DELAY_MS);
 }
 
-void loop() {  
+void loop() {
+  static const int kResetDelay = 2000;
   ir_loop();
   person_sensor_loop();
   
-  // If the left button is pressed send a mute code.
+  // If the left button is pressed, enter programming mode.
   if (CircuitPlayground.leftButton()) {
-    waitingForPlay = true;
-    PLAY_AUDIO(recording);
+    int start_time = millis();
+    while (CircuitPlayground.rightButton()) {}
+    if (millis() - start_time > kResetDelay) {
+      for (int i=0; i<10; i++) {
+        CircuitPlayground.setPixelColor(i, 0, 255, 0);
+      }
+      useSamsungCodes();
+      delay(200);
+      for (int i=0; i<10; i++) {
+        CircuitPlayground.setPixelColor(i, 0, 0, 0);
+      }
+    }
+    Serial.println("entering programming mode.");
+    commandProgrammingMode = true;
+    codeIndex = 0;
+    CircuitPlayground.clearPixels();
+    gotNew = false;
     while (CircuitPlayground.leftButton()) {}//wait until button released
     PLAY_AUDIO(press);
     PLAY_AUDIO(play);
-  }
-  // If the right button is pressed send a play/pause code.
-  if (CircuitPlayground.rightButton()) {
-    if (isPaused) {
-      CircuitPlayground.irSend.send(codeConfig.playCodeProtocol, codeConfig.playCodeValue, codeConfig.playCodeBits);
-      Serial.print(F("Sending play = 0x"));
-      Serial.println(codeConfig.playCodeValue, HEX);      
-      isPaused = false;
-    } else {
-      CircuitPlayground.irSend.send(codeConfig.pauseCodeProtocol, codeConfig.pauseCodeValue, codeConfig.pauseCodeBits);      
-      Serial.print(F("Sending pause = 0x"));
-      Serial.println(codeConfig.pauseCodeValue, HEX);      
-      isPaused = true;
-    }
-    while (CircuitPlayground.rightButton()) {}//wait until button released
   }
 }
