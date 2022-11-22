@@ -176,6 +176,7 @@ void ir_loop() {
     CircuitPlayground.clearPixels();
     CircuitPlayground.setPixelColor(pixelIndex, red, green, blue);
     pixelIndex = (pixelIndex + pixelInc + 10) % 10;
+    delay(SAMPLE_DELAY_MS);
   }
   
   if (CircuitPlayground.irReceiver.getResults()) {
