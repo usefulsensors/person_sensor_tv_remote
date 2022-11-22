@@ -70,3 +70,6 @@ to the `Additional Boards Manager URLs` field in the Arduino preferences window.
 ![Arduino preferences](board_url.png)
 
 Once this is set, 
+
+
+FlashStorage
