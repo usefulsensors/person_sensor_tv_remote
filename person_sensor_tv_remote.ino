@@ -6,10 +6,7 @@
 
 #include <Adafruit_CircuitPlayground.h>
 
-#include <Adafruit_SPIFlash.h>
-
-// for flashTransport definition
-#include "flash_config.h"
+#include <FlashStorage.h>
 
 #include "person_sensor.h"
 
@@ -34,14 +31,6 @@
   #error "Infrared support is only for the Circuit Playground Express, it doesn't work with the Classic version"
 #endif
 
-//Defines for a Samsung TV using NECx protocol
-#define MY_PROTOCOL NECX
-#define MY_BITS 32
-#define MY_MUTE 0xE0E0F00F
-#define MY_POWER 0xE0E040BF
-#define MY_PLAY 0xE0E0E21D
-#define MY_PAUSE 0xE0E052AD
-
 // How long to wait between reading the sensor. The sensor can be read as
 // frequently as you like, but the results only change at about 5FPS, so
 // waiting for 200ms is reasonable.
@@ -57,6 +46,7 @@ uint32_t codeValue = 0;
 uint8_t codeBits = 0;
 
 typedef struct __attribute__ ((__packed__)) {
+  bool isValid;
   uint8_t playCodeProtocol;
   uint32_t playCodeValue;
   uint8_t playCodeBits;
@@ -75,7 +65,9 @@ const CodeConfig_t samsungCodes = {
   .pauseCodeBits = 32,
 };
 
-CodeConfig_t codeConfig = samsungCodes;
+CodeConfig_t codeConfig;
+
+FlashStorage(flashStore, CodeConfig_t);
 
 bool waitingForPlay = false;
 bool waitingForPause = false;
@@ -93,13 +85,6 @@ const int32_t playDelayCount = (playDelaySeconds * 1000) / SAMPLE_DELAY_MS;
 int32_t timeSinceFaceSeen = 0;
 int32_t timeFaceSeen = 0;
 bool isPlaying = true;
-
-Adafruit_SPIFlash flash(&flashTransport);
-FatVolume fatfs;
-File32 myFile;
-
-#define FLASH_BLOCK_SIZE (256)
-const char* config_file_name = "config.bin";
 
 const int audioSampleRate = 22050;
 
@@ -135,26 +120,13 @@ void receiveCode(void) {
 }
 
 void flash_read_config() {
-  myFile = fatfs.open(config_file_name);
-  if (myFile) {
-    Serial.print("Reading config from ");
-    Serial.println(config_file_name);
-    Serial.print("Length is ");
-    Serial.println(myFile.fileSize());
-    myFile.read((uint*)(&codeConfig), sizeof(codeConfig)); 
-    myFile.close();
+  codeConfig = flashStore.read();
+  if (codeConfig.isValid) {
+    Serial.println("Read config from flash");
   } else {
-    Serial.print("No config found, writing to ");
-    Serial.println(config_file_name);
-    
-    codeConfig.playCodeProtocol = NECX;
-    codeConfig.playCodeValue = 0xE0E0E21D;
-    codeConfig.playCodeBits = 32;
-
-    codeConfig.pauseCodeProtocol = NECX;
-    codeConfig.pauseCodeValue = 0xE0E052AD;
-    codeConfig.pauseCodeBits = 32;
-    flash_write_config();
+    Serial.println("No config found, writing to flash");
+    codeConfig = samsungCodes;
+    codeConfig.isValid = true;
   }
   Serial.print(F("Read play = 0x"));
   Serial.println(codeConfig.playCodeValue, HEX);
@@ -163,37 +135,10 @@ void flash_read_config() {
 }
 
 void flash_write_config() {
-    myFile = fatfs.open(config_file_name, (O_RDWR | O_CREAT | O_TRUNC));
-    if (!myFile) {
-      Serial.print("Failed to open for writing: ");
-      Serial.println(config_file_name);
-      return;
-    }
-    myFile.write((uint*)(&codeConfig), sizeof(codeConfig)); 
-    myFile.close();
-    Serial.print(F("Stored play = 0x"));
-    Serial.println(codeConfig.playCodeValue, HEX);
-    Serial.print(F("Stored pause = 0x"));
-    Serial.println(codeConfig.pauseCodeValue, HEX);
-    flash_read_config();
+  flashStore.write(codeConfig);
 }
 
-void flash_setup() {
-  flash.begin();
-
-  // Open file system on the flash
-  if ( !fatfs.begin(&flash) ) {
-    Serial.println("Error: filesystem is not existed. Please try SdFat_format example to make one.");
-    while(1)
-    {
-      yield();
-      delay(1);
-    }
-  }
-
-  flash_read_config();
-}
-
+// Macro to automatically look up the right variable name based on a phrase, and play it.
 #define PLAY_AUDIO(NAME) do { play_audio(g_##NAME##_data, g_##NAME##_data_len); } while (false)
 
 void play_audio(const uint8_t* bytes, int bytes_count) {
@@ -204,7 +149,7 @@ void setup() {
   CircuitPlayground.begin();
   CircuitPlayground.clearPixels();    
   ir_setup();
-  flash_setup();
+  flash_read_config();
   Wire.begin();
 }
 
