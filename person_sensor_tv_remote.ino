@@ -34,48 +34,10 @@
   #error "Infrared support is only for the Circuit Playground Express, it doesn't work with the Classic version"
 #endif
 
-//Defines for a Samsung TV using NECx protocol
-#define MY_PROTOCOL NECX
-#define MY_BITS 32
-#define MY_MUTE 0xE0E0F00F
-#define MY_POWER 0xE0E040BF
-#define MY_PLAY 0xE0E0E21D
-#define MY_PAUSE 0xE0E052AD
-
-// === Samsung Preset Codes ===
-static const uint8_t kSamsungProtocol = NECX;
-static const uint8_t kSamsungCodeBits = 32;
-
-static const uint32_t kSamsungCodes[] = {
-  0xE0E06798, // Power
-  0xE0E006F9, // Up
-  0xE0E08679, // Down
-  0xE0E016E9, // Enter
-  0xE0E01AE5, // Return
-  0xE0E0F00F, // Mute
-};
-
-// === TCL Preset Codes ===
-static const uint8_t kTCLProtocol = NEC;
-static const uint8_t kTCLCodeBits = 32;
-
-static const uint32_t kTCLCodes[] = {
-  0x57E3E916, // Power
-  0x57E39867, // Up
-  0x57E3CC33, // Down
-  0x57E354AB, // Enter
-  0x57E36699, // Return
-  0x57E304FB, // Mute
-};
-
-// === LG Preset Codes ===
-
-// === Sony Preset Codes ===
-
 // How long to wait between reading the sensor. The sensor can be read as
 // frequently as you like, but the results only change at about 5FPS, so
 // waiting for 200ms is reasonable.
-const int32_t SAMPLE_DELAY_MS = 200;
+const int32_t SAMPLE_DELAY_MS = 250;
 
 //These flags keep track of whether we received the first code 
 //and if we have have received a new different code from a previous one.
@@ -89,28 +51,54 @@ static int codeIndex = 0;
 static const int kNumCodes = 6;
 
 typedef struct __attribute__ ((__packed__)) {
-  uint8_t codeProtocols[kNumCodes];
-  uint32_t codeValues[kNumCodes];
-  uint8_t codeBits[kNumCodes];
+  uint8_t codeProtocol;
+  uint32_t powerCode;
+  uint32_t playCode;
+  uint32_t muteCode;
+  uint32_t downCode;
+  uint32_t upCode;
+  uint32_t backCode;
+  uint8_t codeBits;
 } CodeConfig_t;
 
-const CodeConfig_t samsungCodes = {
-  .playCodeProtocol = NECX,
-  .playCodeValue = 0xE0E0E21D,
-  .playCodeBits = 32,
-  .pauseCodeProtocol = NECX,
-  .pauseCodeValue = 0xE0E052AD,
-  .pauseCodeBits = 32,
+#define MY_MUTE 0xE0E0F00F
+#define MY_POWER 0xE0E040BF
+#define MY_PLAY 0xE0E0E21D
+#define MY_PAUSE 0xE0E052AD
+
+// === Samsung Preset Codes ===
+static const CodeConfig_t kSamsungCodes = {
+  .codeProtocol = NECX,
+  .powerCode = 0xE0E040BF,
+  .playCode = 0xE0E016E9,
+  .muteCode = 0xE0E0F00F,
+  .codeBits = 32
 };
 
-CodeConfig_t codeConfig = samsungCodes;
+// === TCL Preset Codes ===
+static const CodeConfig_t kTCLCodes = {
+  .codeProtocol = NEC,
+  .powerCode = 0x57E3E916,
+  .playCode = 0x57E354AB,
+  .muteCode = 0x57E304FB,
+  .downCode = 0x57E3CD32,
+  .upCode = 0x57E39966,
+  .backCode = 0x57E36798,
+  .codeBits = 32
+};
+
+CodeConfig_t codeConfig;
+
+// === LG Preset Codes ===
+
+// === Sony Preset Codes ===
 
 int delays[kNumCodes] = {};
 static const int gesture_delays[kNumCodes] = {
   20, // on/off
-  6, // up
-  6, // down
-  12, // ok
+  4,  // up
+  4,  // down
+  12, // enter
   12, // back
   20, // mute
 };
@@ -125,6 +113,12 @@ File32 myFile;
 const char* config_file_name = "config.bin";
 
 const int audioSampleRate = 22050;
+
+#define PLAY_AUDIO(NAME) do { play_audio(g_##NAME##_data, g_##NAME##_data_len); } while (false)
+
+void play_audio(const uint8_t* bytes, int bytes_count) {
+  CircuitPlayground.speaker.playSound(bytes, bytes_count, audioSampleRate, false);
+}
 
 void ir_setup() {
   gotNew=false;
@@ -160,9 +154,15 @@ void receiveCode(void) {
 }
 
 void useSamsungCodes() {
-  memcpy(&codeConfig.codeValues, kSamsungCodes, sizeof(uint32_t) * kNumCodes);
-  memset(&codeConfig.codeProtocols, kSamsungProtocol, sizeof(uint8_t) * kNumCodes);
-  memset(&codeConfig.codeBits, kSamsungCodeBits, sizeof(uint8_t) * kNumCodes);
+  memcpy(&codeConfig, &kSamsungCodes, sizeof(CodeConfig_t));
+  PLAY_AUDIO(samsung);
+  flash_write_config();
+}
+
+void useTCLCodes() {
+  memcpy(&codeConfig, &kTCLCodes, sizeof(CodeConfig_t));
+  PLAY_AUDIO(tcl);
+  flash_write_config();
 }
 
 void flash_read_config() {
@@ -177,7 +177,8 @@ void flash_read_config() {
   } else {
     Serial.print("No config found, Defaulting to Samsung Codes");
     //commandProgrammingMode = true;
-    useSamsungCodes();
+    //useSamsungCodes();
+    useTCLCodes();
   }
 }
 
@@ -209,22 +210,12 @@ void flash_setup() {
   flash_read_config();
 }
 
-#define PLAY_AUDIO(NAME) do { play_audio(g_##NAME##_data, g_##NAME##_data_len); } while (false)
-
-void play_audio(const uint8_t* bytes, int bytes_count) {
-  CircuitPlayground.speaker.playSound(bytes, bytes_count, audioSampleRate, false);
-}
-
 void setup() {
   CircuitPlayground.begin();
   CircuitPlayground.clearPixels();    
   ir_setup();
   flash_setup();
   Wire.begin();
-}
-
-bool is_recording() {
-  return (waitingForPlay || waitingForPause);
 }
 
 void ir_loop() {
@@ -238,13 +229,32 @@ void ir_loop() {
   }
   if (gotNew) {
     if (commandProgrammingMode) {
-      codeConfig.codeValues[codeIndex] = codeValue;
-      codeConfig.codeProtocols[codeIndex] = codeProtocol;
-      codeConfig.codeBits[codeIndex] = codeBits;
+      codeConfig.codeProtocol = codeProtocol;
+      switch(codeIndex) {
+        case 0:
+          codeConfig.powerCode = codeValue;
+          break;
+        case 1: 
+          codeConfig.upCode = codeValue;
+          break;
+        case 2: 
+          codeConfig.downCode = codeValue;
+          break;
+        case 3: 
+          codeConfig.playCode = codeValue;
+          break;
+        case 4: 
+          codeConfig.backCode = codeValue;
+          break;
+        case 5:
+          codeConfig.muteCode = codeValue;
+          break;
+      }
+      codeConfig.codeBits = codeBits;
       CircuitPlayground.setPixelColor(codeIndex, 255, 255, 0);
 
       Serial.print(F("New Code = 0x"));
-      Serial.println(codeConfig.codeValues[codeIndex], HEX);
+      Serial.println(codeValue, HEX);
       Serial.print("num codex received:"); Serial.println(codeIndex);
       if (++codeIndex == kNumCodes) {
         CircuitPlayground.clearPixels();
@@ -263,18 +273,41 @@ void ir_loop() {
 int gestureIdToCodeIndex(int gesture_idx) {
   if (gesture_idx == 13) {
     return 0; // on/off
+  } else if (gesture_idx == 7) {
+    return 3; // ok
+  } else if (gesture_idx == 6) {
+    return 5; // mute
   } else if (gesture_idx == 5) {
     return 1; // up
   } else if (gesture_idx == 2) {
     return 2; // down
-  } else if (gesture_idx == 7) {
-    return 3; // ok
   } else if (gesture_idx == 3) {
     return 4; // back
-  } else if (gesture_idx == 6) {
-    return 5; // mute
   }
   return -1;
+}
+
+void gesture_audio(int gesture_idx) {
+  switch(gesture_idx) {
+    case 0: // Power
+      PLAY_AUDIO(press);
+      break;
+    case 1: // Up
+      PLAY_AUDIO(up);
+      break;
+    case 2: // Down
+      PLAY_AUDIO(down);
+      break;
+    case 3: // Enter
+      PLAY_AUDIO(play);
+      break;
+    case 4: // Back
+      PLAY_AUDIO(pause);
+      break;
+    case 5: // Mute
+      PLAY_AUDIO(mute);
+      break;
+  }
 }
 
 void person_sensor_loop() {
@@ -296,8 +329,28 @@ void person_sensor_loop() {
     int code_idx = gestureIdToCodeIndex(results.hands[0].gesture_class);
     if (code_idx >= 0 && delays[code_idx] == 0) {
       Serial.print("sending code "); Serial.println(code_idx);
-      CircuitPlayground.irSend.send(codeConfig.codeProtocols[code_idx], codeConfig.codeValues[code_idx], codeConfig.codeBits[code_idx]);
+      switch(code_idx) {
+        case 0: // Power
+          CircuitPlayground.irSend.send(codeConfig.codeProtocol, codeConfig.powerCode, codeConfig.codeBits);
+          break;
+        case 1: // Up
+          CircuitPlayground.irSend.send(codeConfig.codeProtocol, codeConfig.upCode, codeConfig.codeBits);
+          break;
+        case 2: // Down
+          CircuitPlayground.irSend.send(codeConfig.codeProtocol, codeConfig.downCode, codeConfig.codeBits);
+          break;
+        case 3: // Enter
+          CircuitPlayground.irSend.send(codeConfig.codeProtocol, codeConfig.playCode, codeConfig.codeBits);
+          break;
+        case 4: // Back
+          CircuitPlayground.irSend.send(codeConfig.codeProtocol, codeConfig.backCode, codeConfig.codeBits);
+          break;
+        case 5: // Mute
+          CircuitPlayground.irSend.send(codeConfig.codeProtocol, codeConfig.muteCode, codeConfig.codeBits);
+          break;
+      }
       delays[code_idx] = gesture_delays[code_idx];
+      gesture_audio(code_idx);
     }
   }
 
@@ -323,11 +376,12 @@ void loop() {
       for (int i=0; i<10; i++) {
         CircuitPlayground.setPixelColor(i, 0, 255, 0);
       }
-      useSamsungCodes();
+      useTCLCodes();
       delay(200);
       for (int i=0; i<10; i++) {
         CircuitPlayground.setPixelColor(i, 0, 0, 0);
       }
+      return;
     }
     Serial.println("entering programming mode.");
     commandProgrammingMode = true;
@@ -335,7 +389,5 @@ void loop() {
     CircuitPlayground.clearPixels();
     gotNew = false;
     while (CircuitPlayground.leftButton()) {}//wait until button released
-    PLAY_AUDIO(press);
-    PLAY_AUDIO(play);
   }
 }
