@@ -50,6 +50,15 @@ void sendCode(int code_idx);
 #define TFT_SCLK      PIN_WIRE_SCL  // Clock out
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 
+#define STATE_NO_FACE 0
+#define STATE_FACE_ON 1
+#define STATE_TURNED_AWAY 2
+#define PAUSE_DELAY_MILLIS 4000
+#define TURN_OFF_DELAY_MILLIS 10000
+#define POWER_RECT_OFFSET_Y 60
+#define ATTENTION_RECT_OFFSET_Y 120
+#define RECT_H 20
+
 // === Person Sensor Configuration ===
 #define SOFT_I2C true
 #define SOFT_SCL 9
@@ -139,44 +148,52 @@ static void initScreen(){
   tft.setTextWrap(true);
   // large block of text
   tft.fillScreen(ST77XX_BLACK);
+  tft.drawRect(8, POWER_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
+  tft.drawRect(8, ATTENTION_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
+  tft.setCursor(0, 0);
+  tft.print("STATE:");
+    tft.setCursor(0, 40);
+  tft.print("PRESENCE:");
+    tft.setCursor(0, 100);
+  tft.print("ATTENTION:");
 }
 
 void sendCode(int code_idx) {
   CircuitPlayground.irSend.send(codeConfig.codeProtocols[code_idx], codeConfig.codeValues[code_idx], codeConfig.codeBits[code_idx]);
 }
 
-#define STATE_NO_FACE 0
-#define STATE_FACE_ON 1
-#define STATE_TURNED_AWAY 2
-#define PAUSE_DELAY_MILLIS 4000
-#define TURN_OFF_DELAY_MILLIS 10000
 
-void displayState(int state, int millis_since_face, int millis_since_face_on) {
+void displayState(int state, int millis_since_face, int millis_since_face_on, bool state_changed, bool timer_reset) {
   Serial.println(state);
+  if (state_changed || timer_reset) {
+    if (state_changed) {
+      tft.fillRect(80, 0, 80, 20, ST77XX_BLACK);
+    }
+    if (state_changed && state == STATE_NO_FACE) {
+      tft.fillRect(10, POWER_RECT_OFFSET_Y, 200, RECT_H, ST77XX_BLACK);
+    } else if (!(state_changed && state == STATE_TURNED_AWAY)) {
+      tft.fillRect(10, POWER_RECT_OFFSET_Y, 200, RECT_H, ST77XX_GREEN);
+    }
+    if (state == STATE_TURNED_AWAY || state == STATE_NO_FACE) {
+      tft.fillRect(10, ATTENTION_RECT_OFFSET_Y, 200, RECT_H, ST77XX_BLACK);
+    } else {
+      tft.fillRect(10, ATTENTION_RECT_OFFSET_Y, 200, RECT_H, ST77XX_GREEN);
+    }
+  }
 
-  tft.setCursor(0, 0);
-  tft.fillRect(0, 0, 240, 80, ST77XX_BLACK);
-  tft.setCursor(0, 0);
-
-  char buf[100];
-  switch(state) {
-    case STATE_NO_FACE:
-      tft.print("No Face\nTV OFF");
-      break;
-    case STATE_FACE_ON:
-      sprintf(buf, "Face-on\npause in %ds.\nTV off in %ds",
-                    (PAUSE_DELAY_MILLIS - millis_since_face_on) / 1000,
-                    (TURN_OFF_DELAY_MILLIS - millis_since_face) / 1000);
-      tft.print(buf);
-      break;
-    case STATE_TURNED_AWAY:
-          sprintf(buf, "Faced away\nTV off in %ds",
-                    (TURN_OFF_DELAY_MILLIS - millis_since_face) / 1000);
-      tft.print(buf);
-      break;
-    default:
-      Serial.println("Error - invalid state");
-      break;
+  tft.setCursor(80, 0);
+  if (state == STATE_NO_FACE) {
+      tft.print("OFF");
+  } else if (state == STATE_FACE_ON) {
+    tft.print("PLAY");
+    int att_rect_w = millis_since_face_on * 200 / PAUSE_DELAY_MILLIS;
+    tft.fillRect(210 - att_rect_w, ATTENTION_RECT_OFFSET_Y, att_rect_w, RECT_H, ST77XX_BLACK);
+    int pwr_rect_w = millis_since_face * 200 / TURN_OFF_DELAY_MILLIS;
+    tft.fillRect(210 - pwr_rect_w, POWER_RECT_OFFSET_Y, pwr_rect_w, RECT_H, ST77XX_BLACK);
+  } else if (state == STATE_TURNED_AWAY) {
+    tft.print("PAUSE");
+    int pwr_rect_w = millis_since_face * 200 / TURN_OFF_DELAY_MILLIS;
+    tft.fillRect(210 - pwr_rect_w, POWER_RECT_OFFSET_Y, pwr_rect_w, RECT_H, ST77XX_BLACK);
   }
 }
 
@@ -196,11 +213,14 @@ void handleSensorResults(person_sensor_results_t results) {
     }
   }
 
+  bool state_change = false;
+  bool timer_reset = state == STATE_FACE_ON && is_face_on || state == STATE_TURNED_AWAY && has_face;
   lastFaceSeenTime = has_face ? millis() : lastFaceSeenTime;
   lastFaceOnTime = is_face_on ? millis() : lastFaceOnTime;
   switch(state) {
     case STATE_NO_FACE:
       if (has_face) {
+        state_change = true;
         sendCode(0); // Power on.
         lastFaceSeenTime = millis();
         if (is_face_on) {
@@ -215,20 +235,24 @@ void handleSensorResults(person_sensor_results_t results) {
       break;
     case STATE_FACE_ON:
       if (millis() - lastFaceOnTime > PAUSE_DELAY_MILLIS) {
+        state_change = true;
         sendCode(3); // Pause.
         state = STATE_TURNED_AWAY;
       }
       if (millis() - lastFaceSeenTime > TURN_OFF_DELAY_MILLIS) {
+        state_change = true;
         sendCode(0); // Power off.
         state = STATE_NO_FACE;
       }
       break;
     case STATE_TURNED_AWAY:
       if (millis() - lastFaceSeenTime > TURN_OFF_DELAY_MILLIS) {
+        state_change = true;
         sendCode(0); // Power off.
         state = STATE_NO_FACE;
       }
       if (is_face_on) {
+        state_change = true;
         sendCode(2); // Play.
         state = STATE_FACE_ON;
       }
@@ -237,5 +261,5 @@ void handleSensorResults(person_sensor_results_t results) {
       Serial.println("Error - invalid state");
       break;
   }
-  displayState(state, millis() - lastFaceSeenTime, millis() - lastFaceOnTime);
+  displayState(state, millis() - lastFaceSeenTime, millis() - lastFaceOnTime, state_change, timer_reset);
 }
