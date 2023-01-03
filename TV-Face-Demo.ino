@@ -82,9 +82,7 @@ void setup(){
   sw.begin();
   
   Serial.begin(BAUD_RATE);
-  while(!Serial);
   Serial.println("Booting person TV remote");
-  int nDevices = softwareScan();
   initScreen();
   
   // Use Samsung codes by default.
@@ -114,7 +112,10 @@ static int softwareScan(){
 
   Serial.println("Scanning...");
 
+  int width_increment = 2;
   for(int address = 1; address < 127; address++){
+    int rect_offset = address * 200 / 127;
+    tft.fillRect(10 + rect_offset, POWER_RECT_OFFSET_Y, width_increment, RECT_H, ST77XX_GREEN);
     uint8_t startResult = sw.llStart((address << 1) + 1);
     sw.stop();
 
@@ -124,6 +125,7 @@ static int softwareScan(){
       Serial.println(address,HEX);
       nDevices++;
     }
+    delay(10);
   }
 
   if(nDevices == 0){
@@ -146,16 +148,30 @@ static void initScreen(){
   tft.setTextSize(2, 2);
   tft.setTextColor(ST77XX_GREEN);
   tft.setTextWrap(true);
-  // large block of text
+  // Init message
   tft.fillScreen(ST77XX_BLACK);
   tft.drawRect(8, POWER_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
+  tft.setCursor(10, 0);
+  tft.print("INITIALIZING...");
+  int num_devices = softwareScan();
+  tft.fillScreen(ST77XX_BLACK);
+  if (num_devices < 1) {
+    tft.setCursor(0, 0);
+    tft.print("NO SENSOR DETECTED");
+    while (true) {}
+  }
+
+  // Start Program
+  tft.drawRect(8, POWER_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
   tft.drawRect(8, ATTENTION_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
-  tft.setCursor(0, 0);
+  tft.setCursor(10, 0);
   tft.print("STATE:");
-    tft.setCursor(0, 40);
+  tft.setCursor(10, 40);
   tft.print("PRESENCE:");
-    tft.setCursor(0, 100);
+  tft.setCursor(10, 100);
   tft.print("ATTENTION:");
+  tft.setCursor(10, 220);
+  tft.print("NUM FACES:");
 }
 
 void sendCode(int code_idx) {
@@ -163,11 +179,17 @@ void sendCode(int code_idx) {
 }
 
 
-void displayState(int state, int millis_since_face, int millis_since_face_on, bool state_changed, bool timer_reset) {
-  Serial.println(state);
+void displayState(int state, int millis_since_face, int millis_since_face_on, bool state_changed, bool timer_reset, int num_faces) {
+  static int previous_num_faces = -1;
+  if (num_faces != previous_num_faces) {
+    tft.fillRect(135, 220, 20, 20, ST77XX_BLACK);
+    tft.setCursor(135, 220);
+    tft.print(num_faces);
+    previous_num_faces = num_faces;
+  }
   if (state_changed || timer_reset) {
     if (state_changed) {
-      tft.fillRect(80, 0, 80, 20, ST77XX_BLACK);
+      tft.fillRect(90, 0, 80, 20, ST77XX_BLACK);
     }
     if (state_changed && state == STATE_NO_FACE) {
       tft.fillRect(10, POWER_RECT_OFFSET_Y, 200, RECT_H, ST77XX_BLACK);
@@ -181,7 +203,7 @@ void displayState(int state, int millis_since_face, int millis_since_face_on, bo
     }
   }
 
-  tft.setCursor(80, 0);
+  tft.setCursor(90, 0);
   if (state == STATE_NO_FACE) {
       tft.print("OFF");
   } else if (state == STATE_FACE_ON) {
@@ -261,5 +283,5 @@ void handleSensorResults(person_sensor_results_t results) {
       Serial.println("Error - invalid state");
       break;
   }
-  displayState(state, millis() - lastFaceSeenTime, millis() - lastFaceOnTime, state_change, timer_reset);
+  displayState(state, millis() - lastFaceSeenTime, millis() - lastFaceOnTime, state_change, timer_reset, results.num_faces);
 }
