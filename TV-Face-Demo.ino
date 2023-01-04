@@ -5,7 +5,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h> // Hardware-specific library for ST7789
 #include <SPI.h>
-#include <Wire.h>
 #include <string.h>
 
 #include "person_sensor.h"
@@ -22,6 +21,17 @@ static const uint32_t kSamsungCodes[] = {
   0xE0E0F00F, // Mute
   0xE0E0E21D, // Play
   0xE0E052AD, // Pause
+};
+
+// === TCL Preset Codes ===
+static const uint8_t kTCLProtocol = NEC;
+static const uint8_t kTCLCodeBits = 32;
+
+static const uint32_t kTCLCodes[] = {
+  0x57E3E817, //Power
+  0x57E304FB, //Mute
+  0x57E332CD, //Play
+  0x57E332CD, //Pause
 };
 
 typedef struct __attribute__ ((__packed__)) {
@@ -59,6 +69,8 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RS
 #define ATTENTION_RECT_OFFSET_Y 120
 #define RECT_H 20
 
+#define VERBOSE false
+
 // === Person Sensor Configuration ===
 #define SOFT_I2C true
 #define SOFT_SCL 9
@@ -82,13 +94,14 @@ void setup(){
   sw.begin();
   
   Serial.begin(BAUD_RATE);
-  Serial.println("Booting person TV remote");
+  delay(250);
+  if(VERBOSE) Serial.println("Booting person TV remote");
   initScreen();
   
   // Use Samsung codes by default.
-  memcpy(&codeConfig.codeValues, kSamsungCodes, sizeof(uint32_t) * kNumCodes);
-  memset(&codeConfig.codeProtocols, kSamsungProtocol, sizeof(uint8_t) * kNumCodes);
-  memset(&codeConfig.codeBits, kSamsungCodeBits, sizeof(uint8_t) * kNumCodes);
+  memcpy(&codeConfig.codeValues, kTCLCodes, sizeof(uint32_t) * kNumCodes);
+  memset(&codeConfig.codeProtocols, kTCLProtocol, sizeof(uint8_t) * kNumCodes);
+  memset(&codeConfig.codeBits, kTCLCodeBits, sizeof(uint8_t) * kNumCodes);
 }
 
 void loop(){
@@ -110,7 +123,7 @@ void loop(){
 static int softwareScan(){
   int nDevices = 0;
 
-  Serial.println("Scanning...");
+  if(VERBOSE) Serial.println("Scanning...");
 
   int width_increment = 2;
   for(int address = 1; address < 127; address++){
@@ -120,20 +133,20 @@ static int softwareScan(){
     sw.stop();
 
     if(startResult == 0){
-      Serial.print("I2C device found at address 0x");
-      if(address < 16) Serial.print("0");
-      Serial.println(address,HEX);
+      if(VERBOSE) Serial.print("I2C device found at address 0x");
+      if(address < 16 && VERBOSE) Serial.print("0");
+      if(VERBOSE) Serial.println(address,HEX);
       nDevices++;
     }
     delay(10);
   }
 
   if(nDevices == 0){
-    Serial.println("No I2C devices found");
+    if(VERBOSE) Serial.println("No I2C devices found");
   }else{
-    Serial.print(nDevices);
-    Serial.print(" devices found at time ");
-    Serial.println(millis());
+    if(VERBOSE) Serial.print(nDevices);
+    if(VERBOSE) Serial.print(" devices found at time ");
+    if(VERBOSE) Serial.println(millis());
   }
 
   return nDevices;
@@ -159,6 +172,11 @@ static void initScreen(){
     tft.setCursor(0, 0);
     tft.print("NO SENSOR DETECTED");
     while (true) {}
+  }else{
+    tft.setCursor(0, 0);
+    tft.print("DEVICE FOUND AT 0x62");
+    delay(1000);
+    tft.fillScreen(ST77XX_BLACK);
   }
 
   // Start Program
@@ -205,7 +223,8 @@ void displayState(int state, int millis_since_face, int millis_since_face_on, bo
 
   tft.setCursor(90, 0);
   if (state == STATE_NO_FACE) {
-      tft.print("OFF");
+      //tft.print("OFF");
+      tft.print("PAUSE");
   } else if (state == STATE_FACE_ON) {
     tft.print("PLAY");
     int att_rect_w = millis_since_face_on * 200 / PAUSE_DELAY_MILLIS;
@@ -213,7 +232,8 @@ void displayState(int state, int millis_since_face, int millis_since_face_on, bo
     int pwr_rect_w = millis_since_face * 200 / TURN_OFF_DELAY_MILLIS;
     tft.fillRect(210 - pwr_rect_w, POWER_RECT_OFFSET_Y, pwr_rect_w, RECT_H, ST77XX_BLACK);
   } else if (state == STATE_TURNED_AWAY) {
-    tft.print("PAUSE");
+    //tft.print("PAUSE");
+    tft.print("MUTE");
     int pwr_rect_w = millis_since_face * 200 / TURN_OFF_DELAY_MILLIS;
     tft.fillRect(210 - pwr_rect_w, POWER_RECT_OFFSET_Y, pwr_rect_w, RECT_H, ST77XX_BLACK);
   }
@@ -243,13 +263,15 @@ void handleSensorResults(person_sensor_results_t results) {
     case STATE_NO_FACE:
       if (has_face) {
         state_change = true;
-        sendCode(0); // Power on.
+        //sendCode(0); // Power on.
+        sendCode(2); // Play.
         lastFaceSeenTime = millis();
         if (is_face_on) {
           lastFaceOnTime = millis();
           state = STATE_FACE_ON;
           delay(100);
-          sendCode(2); // Play.
+          //sendCode(2); // Play.
+          sendCode(1); // Unmute
         } else {
           state = STATE_TURNED_AWAY;
         }
@@ -258,29 +280,33 @@ void handleSensorResults(person_sensor_results_t results) {
     case STATE_FACE_ON:
       if (millis() - lastFaceOnTime > PAUSE_DELAY_MILLIS) {
         state_change = true;
-        sendCode(3); // Pause.
+        //sendCode(3); // Pause.
+        sendCode(1); // Mute
         state = STATE_TURNED_AWAY;
       }
       if (millis() - lastFaceSeenTime > TURN_OFF_DELAY_MILLIS) {
         state_change = true;
-        sendCode(0); // Power off.
+        //sendCode(0); // Power off.
+        sendCode(3); // Pause.
         state = STATE_NO_FACE;
       }
       break;
     case STATE_TURNED_AWAY:
       if (millis() - lastFaceSeenTime > TURN_OFF_DELAY_MILLIS) {
         state_change = true;
-        sendCode(0); // Power off.
+        //sendCode(0); // Power off.
+        sendCode(3); // Pause.
         state = STATE_NO_FACE;
       }
       if (is_face_on) {
         state_change = true;
-        sendCode(2); // Play.
+        // sendCode(2); // Play.
+        sendCode(1); // Unmute.
         state = STATE_FACE_ON;
       }
       break;
     default:
-      Serial.println("Error - invalid state");
+      if(VERBOSE) Serial.println("Error - invalid state");
       break;
   }
   displayState(state, millis() - lastFaceSeenTime, millis() - lastFaceOnTime, state_change, timer_reset, results.num_faces);
