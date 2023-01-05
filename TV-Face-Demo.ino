@@ -86,6 +86,11 @@ byte swRxBuffer[sizeof(person_sensor_results_t)];
 static int hardwareScan(void);
 static int softwareScan(void);
 
+#define DEMO_MODE_ON_OFF 0
+#define DEMO_MODE_MUTE_UNMUTE 1
+#define DEMO_MODE_BBOXES 2
+int demo_mode = DEMO_MODE_MUTE_UNMUTE;
+
 void setup(){
   // Init Software I2C.
   sw.setTxBuffer(swTxBuffer, sizeof(swTxBuffer));
@@ -96,6 +101,7 @@ void setup(){
   Serial.begin(BAUD_RATE);
   delay(250);
   if(VERBOSE) Serial.println("Booting person TV remote");
+    CircuitPlayground.begin();
   initScreen();
   
   // Use Samsung codes by default.
@@ -105,6 +111,31 @@ void setup(){
 }
 
 void loop(){
+  static int previous_demo_mode = DEMO_MODE_MUTE_UNMUTE;
+  // Switch between ON/OFF mode and MUTE/UNMUTE mode if in TV control modes.
+  if (CircuitPlayground.leftButton()) {
+    tft.fillRect(80, 190, 160, 20, ST77XX_BLACK);
+    tft.setCursor(80, 190);
+    if (demo_mode == DEMO_MODE_ON_OFF) {
+      tft.print("MUTE/PAUSE");
+      demo_mode = DEMO_MODE_MUTE_UNMUTE;
+    } else if (demo_mode == DEMO_MODE_MUTE_UNMUTE) {
+      tft.print("PAUSE/POWER");
+      demo_mode = DEMO_MODE_ON_OFF;
+    }
+    delay(500);
+  }
+  // Switch between TV demo mode and 
+  if(CircuitPlayground.rightButton()) {
+    if (demo_mode == DEMO_MODE_ON_OFF || demo_mode == DEMO_MODE_MUTE_UNMUTE) {
+      previous_demo_mode = demo_mode;
+      demo_mode = DEMO_MODE_BBOXES;
+    } else {
+      demo_mode = previous_demo_mode;
+    }
+    drawBackground();
+    delay(500);
+  }
   person_sensor_results_t results;
   if(millis() - readTimestamp >= SAMPLE_PERIOD){
     person_sensor_results_t* results_ptr = &results;
@@ -113,8 +144,12 @@ void loop(){
     for(int i = 0; i < sizeof(person_sensor_results_t); i++){
       results_bytes[i] = sw.read();
     }
-      
-    handleSensorResults(results);
+
+    if (demo_mode == DEMO_MODE_BBOXES) {
+      handleBbox(results);
+    } else {
+      handleSensorResults(results);
+    }
 
     readTimestamp = millis();
   }
@@ -152,6 +187,31 @@ static int softwareScan(){
   return nDevices;
 }
 
+static void drawBackground() {
+  tft.fillScreen(ST77XX_BLACK);
+  if (demo_mode != DEMO_MODE_BBOXES) {
+    // Draw bar background + text.
+    tft.drawRect(8, POWER_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
+    tft.drawRect(8, ATTENTION_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
+    tft.setCursor(10, 0);
+    tft.print("STATE:");
+    tft.setCursor(10, 40);
+    tft.print("PRESENCE:");
+    tft.setCursor(10, 100);
+    tft.print("ATTENTION:");
+    tft.setCursor(10, 190);
+    tft.print("MODE:");
+    tft.setCursor(80, 190);
+    if (demo_mode == DEMO_MODE_MUTE_UNMUTE) {
+      tft.print("MUTE/PAUSE");
+    } else {
+      tft.print("PAUSE/POWER");
+    }
+  }
+  tft.setCursor(10, 220);
+  tft.print("NUM FACES:");
+}
+
 static void initScreen(){
   pinMode(TFT_BACKLIGHT, OUTPUT);
   digitalWrite(TFT_BACKLIGHT, HIGH); // Backlight on
@@ -176,26 +236,52 @@ static void initScreen(){
     tft.setCursor(0, 0);
     tft.print("DEVICE FOUND AT 0x62");
     delay(1000);
-    tft.fillScreen(ST77XX_BLACK);
   }
-
-  // Start Program
-  tft.drawRect(8, POWER_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
-  tft.drawRect(8, ATTENTION_RECT_OFFSET_Y-2, 204, RECT_H+4, ST77XX_GREEN);
-  tft.setCursor(10, 0);
-  tft.print("STATE:");
-  tft.setCursor(10, 40);
-  tft.print("PRESENCE:");
-  tft.setCursor(10, 100);
-  tft.print("ATTENTION:");
-  tft.setCursor(10, 220);
-  tft.print("NUM FACES:");
+  drawBackground();
 }
 
 void sendCode(int code_idx) {
   CircuitPlayground.irSend.send(codeConfig.codeProtocols[code_idx], codeConfig.codeValues[code_idx], codeConfig.codeBits[code_idx]);
 }
 
+#define STATE_CHANGE_FACE 0
+#define STATE_CHANGE_NO_FACE 1
+#define STATE_CHANGE_FACE_ON 2
+#define STATE_CHANGE_TURNED_AWAY 3
+void handleStateChange(int state_change) {
+  switch(state_change) {
+    case STATE_CHANGE_FACE:
+      if (demo_mode == DEMO_MODE_ON_OFF) {
+        sendCode(0);
+      } else {
+        sendCode(2);
+      }
+      break;
+    case STATE_CHANGE_NO_FACE:
+      if (demo_mode == DEMO_MODE_ON_OFF) {
+        sendCode(0);
+      } else {
+        sendCode(3);
+      }
+      break;
+    case STATE_CHANGE_FACE_ON:
+      if (demo_mode == DEMO_MODE_ON_OFF) {
+        sendCode(2);
+      } else {
+        sendCode(1);
+      }
+      break;        
+    case STATE_CHANGE_TURNED_AWAY:
+      if (demo_mode == DEMO_MODE_ON_OFF) {
+        sendCode(3);
+      } else {
+        sendCode(1);
+      }
+      break;
+    default:
+      break;
+  }
+}
 
 void displayState(int state, int millis_since_face, int millis_since_face_on, bool state_changed, bool timer_reset, int num_faces) {
   static int previous_num_faces = -1;
@@ -223,8 +309,11 @@ void displayState(int state, int millis_since_face, int millis_since_face_on, bo
 
   tft.setCursor(90, 0);
   if (state == STATE_NO_FACE) {
-      //tft.print("OFF");
+    if (demo_mode == DEMO_MODE_MUTE_UNMUTE) {
       tft.print("PAUSE");
+    } else {
+      tft.print("OFF");
+    }
   } else if (state == STATE_FACE_ON) {
     tft.print("PLAY");
     int att_rect_w = millis_since_face_on * 200 / PAUSE_DELAY_MILLIS;
@@ -232,10 +321,46 @@ void displayState(int state, int millis_since_face, int millis_since_face_on, bo
     int pwr_rect_w = millis_since_face * 200 / TURN_OFF_DELAY_MILLIS;
     tft.fillRect(210 - pwr_rect_w, POWER_RECT_OFFSET_Y, pwr_rect_w, RECT_H, ST77XX_BLACK);
   } else if (state == STATE_TURNED_AWAY) {
-    //tft.print("PAUSE");
-    tft.print("MUTE");
+    if (demo_mode == DEMO_MODE_MUTE_UNMUTE) {
+      tft.print("MUTE");
+    } else {
+      tft.print("PAUSE");
+    }
     int pwr_rect_w = millis_since_face * 200 / TURN_OFF_DELAY_MILLIS;
     tft.fillRect(210 - pwr_rect_w, POWER_RECT_OFFSET_Y, pwr_rect_w, RECT_H, ST77XX_BLACK);
+  }
+}
+
+void handleBbox(person_sensor_results_t results) {
+  static int previous_num_faces = -1;
+  static person_sensor_results_t previous_results = {};
+  if (results.num_faces != previous_num_faces) {
+    tft.fillRect(135, 220, 20, 20, ST77XX_BLACK);
+    tft.setCursor(135, 220);
+    tft.print(results.num_faces);
+    previous_num_faces = results.num_faces;
+  }
+
+  // Erase previous results.
+  for (int i=0; i<previous_results.num_faces; i++) {
+    int x1 = previous_results.boxes[i].x1 * 240 / 256;
+    int y1 = previous_results.boxes[i].y1 * 220 / 256;
+    int x2 = previous_results.boxes[i].x2 * 240 / 256;
+    int y2 = previous_results.boxes[i].y2 * 220 / 256;
+    tft.drawRect(x1, y1, x2-x1, y2-y1, ST77XX_BLACK);
+  }
+  previous_results = results;
+  // Draw new results.
+  for (int i=0; i<results.num_faces; i++) {
+    int x1 = results.boxes[i].x1 * 240 / 256;
+    int y1 = results.boxes[i].y1 * 220 / 256;
+    int x2 = results.boxes[i].x2 * 240 / 256;
+    int y2 = results.boxes[i].y2 * 220 / 256;
+    if (results.boxes[i].face_on) {
+      tft.drawRect(x1, y1, x2-x1, y2-y1, ST77XX_GREEN);
+    } else {
+      tft.drawRect(x1, y1, x2-x1, y2-y1, ST77XX_BLUE);
+    }
   }
 }
 
@@ -263,15 +388,13 @@ void handleSensorResults(person_sensor_results_t results) {
     case STATE_NO_FACE:
       if (has_face) {
         state_change = true;
-        //sendCode(0); // Power on.
-        sendCode(2); // Play.
+        handleStateChange(STATE_CHANGE_FACE);
         lastFaceSeenTime = millis();
         if (is_face_on) {
           lastFaceOnTime = millis();
           state = STATE_FACE_ON;
           delay(100);
-          //sendCode(2); // Play.
-          sendCode(1); // Unmute
+          handleStateChange(STATE_CHANGE_FACE_ON);
         } else {
           state = STATE_TURNED_AWAY;
         }
@@ -280,28 +403,26 @@ void handleSensorResults(person_sensor_results_t results) {
     case STATE_FACE_ON:
       if (millis() - lastFaceOnTime > PAUSE_DELAY_MILLIS) {
         state_change = true;
-        //sendCode(3); // Pause.
-        sendCode(1); // Mute
+        handleStateChange(STATE_CHANGE_TURNED_AWAY);
         state = STATE_TURNED_AWAY;
       }
       if (millis() - lastFaceSeenTime > TURN_OFF_DELAY_MILLIS) {
         state_change = true;
-        //sendCode(0); // Power off.
-        sendCode(3); // Pause.
+        handleStateChange(STATE_CHANGE_NO_FACE);
+
         state = STATE_NO_FACE;
       }
       break;
     case STATE_TURNED_AWAY:
       if (millis() - lastFaceSeenTime > TURN_OFF_DELAY_MILLIS) {
         state_change = true;
-        //sendCode(0); // Power off.
-        sendCode(3); // Pause.
+        handleStateChange(STATE_CHANGE_NO_FACE);
+
         state = STATE_NO_FACE;
       }
       if (is_face_on) {
         state_change = true;
-        // sendCode(2); // Play.
-        sendCode(1); // Unmute.
+        handleStateChange(STATE_CHANGE_FACE_ON);
         state = STATE_FACE_ON;
       }
       break;
